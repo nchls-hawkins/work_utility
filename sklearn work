@@ -1,0 +1,157 @@
+import pyodbc
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.svm import SVC
+from sklearn import metrics
+from sklearn.neighbors import KNeighborsClassifier
+import xgboost as xgb
+from sklearn.model_selection import GridSearchCV
+from sklearn.neural_network import MLPClassifier
+
+
+connect_string ='Driver={Teradata Database ODBC Driver 17.00};DBCName=edwprdi0.edw.tla.uprr.com;Database=TDBDVP10;MechanismName=LDAP;UseIntegratedSecurity=1;'
+conn = pyodbc.connect(connect_string)
+cursor = conn.cursor()
+
+
+
+sql = '''
+SELECT 
+
+VG_DATE,
+VG_CRC7,
+VG_TIME,
+VG_COMM_DATE, 
+VG_COMM_TIME,
+ARVL_TO_SPOT,
+DID_IT_MAKE_COMT,
+LAST_TRN_SYM,
+TA_DATE, 
+TA_TIME
+
+
+FROM TDBDVP10.TDB_IMMS_SMRY                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+WHERE SHPR_633 = 'UNITEDPARSER'
+AND YEAR(VG_DATE)= '2021'
+'''
+data = pd.read_sql(sql,conn)
+
+
+
+clean=data.copy()
+print(list(clean.columns))
+
+clean["VG_DATE"] = pd.to_datetime(clean["VG_DATE"])
+clean.VG_TIME=pd.to_datetime(clean.VG_TIME, format='%H%M').dt.time
+clean['VG_COMM_DATE'] = pd.to_datetime(clean['VG_COMM_DATE'])
+clean.VG_COMM_TIME=pd.to_datetime(clean.VG_COMM_TIME, format='%H%M').dt.time
+clean['TA_DATE'] = pd.to_datetime(clean['TA_DATE'])
+clean['TA_TIME'] = pd.to_datetime(clean['TA_TIME'],format='%H%M').dt.time
+clean['VG_COMM_DATE_TIME'] = clean['VG_COMM_DATE'] + pd.to_timedelta(clean['VG_COMM_TIME'].astype(str))
+clean['VG_DATE_TIME'] = clean['VG_DATE'] + pd.to_timedelta(clean['VG_TIME'].astype(str))
+clean['TA_DATE_TIME'] = clean['TA_DATE'] + pd.to_timedelta(clean['TA_TIME'].astype(str))
+
+clean.head()
+clean['arrivaldow'] =  clean['TA_DATE'].dt.day_name()
+
+clean['TAVG_COMM'] = clean['VG_COMM_DATE_TIME']-clean['TA_DATE_TIME']
+
+clean['TAVG_COMM_MIN']= clean['TAVG_COMM'].dt.total_seconds()/60.0
+
+dataset = clean[['DID_IT_MAKE_COMT','LAST_TRN_SYM','TAVG_COMM_MIN','VG_CRC7','arrivaldow']]
+dataset.dropna(axis=0,inplace=True)
+dataset.head()
+
+X= dataset.drop('DID_IT_MAKE_COMT',axis=1)
+Y= dataset['DID_IT_MAKE_COMT']
+
+encoder= OneHotEncoder()
+encoderdf =pd.DataFrame(encoder.fit_transform(X[['LAST_TRN_SYM','VG_CRC7','arrivaldow']]).toarray())
+X=X.join(encoderdf)
+
+X.fillna(0,inplace=True)
+X_train,X_test,y_train,y_test = train_test_split(X,Y,test_size=.33,random_state=42)
+X_train.drop('LAST_TRN_SYM',axis=1,inplace=True)
+X_train.drop('VG_CRC7',axis=1,inplace=True)
+X_train.drop('arrivaldow',axis=1,inplace=True)
+
+scaler = StandardScaler().fit(X_train)
+X_scaled = scaler.transform(X_train)
+
+X_test.drop('LAST_TRN_SYM',axis=1,inplace=True)
+X_test.drop('VG_CRC7',axis=1,inplace=True)
+X_test.drop('arrivaldow',axis=1,inplace=True)
+
+predictions = clf.predict(X_test)
+
+cm= metrics.confusion_matrix(y_test,predictions)
+print(cm)
+
+score = clf.score(X_test, y_test)
+print(score)
+
+plt.figure(figsize=(9,9))
+sns.heatmap(cm, annot=True, fmt=".3f", linewidths=.5, square = True, cmap = 'Blues_r');
+plt.ylabel('Actual label');
+plt.xlabel('Predicted label');
+all_sample_title = 'Accuracy Score: {0}'.format(score)
+plt.title(all_sample_title, size = 15);
+
+print(predictions)
+
+svm = SVC(kernel= 'linear', random_state=1, C=0.1)
+svm.fit(X_scaled, y_train)
+
+predictions2 = svm.predict(X_test)
+
+cm= metrics.confusion_matrix(y_test,predictions2)
+print(cm)
+
+score = svm.score(X_test, y_test)
+print(score)
+
+neigh = KNeighborsClassifier(n_neighbors=10)
+neigh.fit(X_scaled, y_train)
+
+# >>> print(neigh.predict([[1.1]]))
+# [0]
+# >>> print(neigh.predict_proba([[0.9]]))
+# [[0.666... 0.333...]]
+
+knnpredict = neigh.predict(X_test)
+
+score = neigh.score(X_test, y_test)
+print(score)
+
+cmknn = metrics.confusion_matrix(y_test,knnpredict)
+print(cmknn)
+
+plt.figure(figsize=(9,9))
+sns.heatmap(cm, annot=True, fmt=".3f", linewidths=.5, square = True, cmap = 'Blues_r');
+plt.ylabel('Actual label');
+plt.xlabel('Predicted label');
+all_sample_title = 'Accuracy Score: {0}'.format(score)
+plt.title(all_sample_title, size = 15);
+
+xgb_c1=xgb.XGBClassifier()
+
+xgb_c1.fit(X_scaled,y_train)
+
+preds=xgb_c1.predict(X_test)
+
+score = xgb_c1.score(X_test, y_test)
+print(score)
+
+gb_cl = xgb.XGBClassifier(objective="binary:logistic")
+
+clf = MLPClassifier(random_state=1, max_iter=300).fit(X_scaled, y_train)
+
+clf.predict(X_test)
+clf.score(X_test,y_test)
+
+clf= LogisticRegression(solver = 'sag',random_state=0,class_weight='balanced',penalty='none').fit(X_scaled,y_train)
